@@ -161,3 +161,5 @@ cython_debug/
 langchain-docs/
 .DS_Store
 .chroma_db/
+
+.idea/
