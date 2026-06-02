@@ -5,10 +5,11 @@ from typing import Any, Dict, List
 
 import certifi
 from dotenv import load_dotenv
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_classic.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_tavily import TavilyCrawl, TavilyExtract, TavilyMap
 
@@ -22,16 +23,20 @@ os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 
-embeddings = OpenAIEmbeddings(
-    model="text-embedding-3-small",
-    show_progress_bar=False,
-    chunk_size=50,
-    retry_min_seconds=10,
-)
-chroma = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
-vectorstore = PineconeVectorStore(
-    index_name="langchain-docs-2025", embedding=embeddings
-)
+# embeddings = OpenAIEmbeddings(
+#     model="text-embedding-3-small",
+#     show_progress_bar=False,
+#     chunk_size=50,
+#     retry_min_seconds=10,
+# )
+
+embeddings = OllamaEmbeddings(model="nomic-embed-text", temperature=0.2, dimensions=1024)
+
+# a locally created folder and db - it uses sqlite3, with Chroma DB
+vectorstore = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
+# vectorstore = PineconeVectorStore(
+#     index_name="langchain-doc-index-cla", embedding=embeddings
+# )
 tavily_extract = TavilyExtract()
 tavily_map = TavilyMap(max_depth=5, max_breadth=20, max_pages=1000)
 
@@ -77,8 +82,11 @@ async def async_extract(url_batches: List[List[str]]):
         Colors.DARKCYAN,
     )
 
+    # here are not yet executed these coroutines, just created them.
+    # they will be executed in the next line with asyncio.gather
     tasks = [extract_batch(batch, i + 1) for i, batch in enumerate(url_batches)]
 
+    # here are executed, because are awaited, executed asynchronously, and we wait for all of them to complete
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Filter out exceptions and flatten results
@@ -125,6 +133,7 @@ async def index_documents_async(documents: List[Document], batch_size: int = 50)
     # Process all batches concurrently
     async def add_batch(batch: List[Document], batch_num: int):
         try:
+            # this will be done by langchain, get the docs, transform them into vectors, index it into the vectorstore
             await vectorstore.aadd_documents(batch)
             log_success(
                 f"VectorStore Indexing: Successfully added batch {batch_num}/{len(batches)} ({len(batch)} documents)"
@@ -180,6 +189,8 @@ async def main():
         f"✂️  Text Splitter: Processing {len(all_docs)} documents with 4000 chunk size and 200 overlap",
         Colors.YELLOW,
     )
+    # if this number is too small we are going to be rate limited, from embeddings models, they have tokens limits per
+    # second ot we are going to be rate limited by vector store limitations.
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
     splitted_docs = text_splitter.split_documents(all_docs)
     log_success(
@@ -196,6 +207,7 @@ async def main():
     log_info(f"   • Documents extracted: {len(all_docs)}")
     log_info(f"   • Chunks created: {len(splitted_docs)}")
 
-
+# embedding function does not have an inverse function, that correlates to it, so it's important to also have the text,
+# in the vector store
 if __name__ == "__main__":
     asyncio.run(main())
